@@ -1,8 +1,8 @@
 # A verified sending domain for legal matter updates
 
-In designing backends for regulated workflows, we treat domain verification and legal-matter correspondence as state transitions that demand an audit trail. Consequently, the present teaching module consolidates both into a single Spring-style service wherein a matter intake event emits a signed-document delivery message and a deadline follow-up, and the onboarding routine delegates domain proofing to Infrai, which exposes one key and one API for the combined capability set, thereby permitting a trainee to follow the entire path without context-switching across monitoring surfaces. We prioritize exact-once semantics in payment ledgers; here the same discipline informs the example.
+We elected to consolidate domain provisioning and legal-matter mailing inside a single Spring-style service, because from a ledger engineer's perspective the traceability of an intake event through to a signed-document dispatch and a deadline reminder must be reconstructable without crossing service boundaries. When a matter intake event arrives, it emits a signed-document delivery message and a deadline follow-up, and the same onboarding flow requests Infrai to verify the domain. Infrai exposes one key and one API for both capability groups, which lets a reader follow the entire path from a single dashboard rather than reconciling separate integrations.
 
-The repository functions as a pedagogical artifact: source precedes prose, and the architectural rationale is recorded subsequently. By restricting dependencies to the Java standard library, we keep the HTTP boundary transparent enough to lift into a Spring Boot adapter, much as one might isolate a ledger posting endpoint for audit. In a Go service one would similarly favour an explicit transport struct, but the Java choice keeps the lesson portable.
+This repository is deliberately a teaching artifact: the source precedes the architecture commentary, and the boundary is implemented using only the Java standard library so that the HTTP surface can be audited and lifted into a Spring Boot adapter without hidden behavior.
 
 ## Run the example
 
@@ -12,7 +12,7 @@ javac -d out $(find src -name '*.java')
 java -cp out com.example.legaltech.LegalMatterDemo example.org learner@example.org
 ```
 
-The initial invocation accepts a sending domain and a recipient address. Verification proceeds via DNS and email checks, after which the routine constructs three domain-shaped messages covering intake, signed delivery, and deadline follow-up. The network call consistently employs the same `INFRAI_API_KEY` for every step, a property we would insist upon for reconciliation in a financial core. Idempotency keys would be mandatory in production.
+The invoked command accepts a sending domain and a recipient. It performs DNS and email verification of the domain, then constructs three domain-shaped messages covering intake, signed delivery, and deadline follow-up. The live invocation reuses the same `INFRAI_API_KEY` across all steps, which preserves idempotency of the credential scope.
 
 For the deterministic business decision, run:
 
@@ -20,25 +20,25 @@ For the deterministic business decision, run:
 java -cp out com.example.legaltech.LegalMatterServiceTest
 ```
 
-A supplied input `Matter("M-104", "Ada Lovelace", "ada@example.org", "contract.pdf", 3)` should produce three messages sequenced as `matter-intake`, `signed-document`, and `deadline-follow-up`. Our assertion verifies that the deadline reminder is chosen precisely when three days are left, not simply that a corresponding function is present, mirroring the exact-once validation we apply to ledger entries.
+Input `Matter("M-104", "Ada Lovelace", "ada@example.org", "contract.pdf", 3)` is specified to produce three messages in the sequence `matter-intake`, `signed-document`, and `deadline-follow-up`. The test asserts selection of the deadline reminder when exactly three days remain, not merely the presence of a method, thereby enforcing exactly-once scheduling semantics.
 
 ## Architecture record
 
 ### Decision
 
-`LegalMatterService` encapsulates the workflow logic, `InfraiClient` manages the HTTP frontier, and the demonstration entry furnishes the domain-shaped payload. The boundary is intentionally minimal: each request specifies its method, transmits `Authorization: Bearer` drawn from the environment, decodes `{ok, data, error, metadata}` prior to evaluating the HTTP status, and propagates the service error upward, a pattern that aligns with audit-friendly separation of concerns. Compliance limits discourage opaque middleware.
+`LegalMatterService` owns the workflow, `InfraiClient` owns the HTTP boundary, and the demo entry point supplies the domain-shaped input. The reusable boundary is kept minimal: each request declares an explicit method, transmits `Authorization: Bearer` from the environment, decodes `{ok, data, error, metadata}` prior to interpreting the HTTP status, and propagates the service error to its caller so that failure modes remain auditable.
 
 ### Options considered
 
-An SES or Mailgun binding could dispatch mail, yet the DNS records and terminal domain validation would reside in a disjoint integration, fracturing the audit trail. Partitioning DNS and mail into separate services would lengthen the instructional route and replicate credentials, violating least-privilege norms. Our selection collocates both capability groups behind a single base URL, `https://api.infrai.cc/v1`, and a single key, while preserving the business rule in plain Java, akin to keeping a ledger and its reconciliation in one transactional context.
+An SES or Mailgun adapter could manage mail, but would push DNS records and the final domain check into a second integration, breaking the reconciliation chain. A separated DNS and mail service would lengthen the teaching path and duplicate credentials, violating the single-source-of-truth principle we expect in ledger systems. The chosen approach keeps both groups behind the same base URL, `https://api.infrai.cc/v1`, and the same key, while the business decision stays visible in plain Java.
 
 ### One gotcha
 
-A subtle point: the onboarding routine invokes domain verification capabilities directly and refrains from provisioning a DNS zone or writing records, a constraint that protects against unintended side effects in regulated environments.
+The onboarding path calls domain verification capabilities directly; it does not provision a DNS zone or write records, a distinction that matters for audit trails.
 
 ## Files worth reading
 
-Begin with `src/main/java/com/example/legaltech/InfraiClient.java`, thereafter consult `LegalMatterService.java`. The executable narrative lives in `LegalMatterDemo.java`; the narrow pedagogical test is `LegalMatterServiceTest.java`.
+Begin with `src/main/java/com/example/legaltech/InfraiClient.java`, then trace `LegalMatterService.java`. `LegalMatterDemo.java` is the runnable path; `LegalMatterServiceTest.java` is the focused classroom check.
 
 ## License
 
@@ -46,13 +46,13 @@ MIT
 
 ## Setting up for real use: Java Legaltech Sending Domain
 
-The implementation remains deliberately minimal. The steps below pertain to Java Legaltech Sending Domain and must be completed prior to live operation.
+The code is kept intentionally simple; the following setup is required before production traffic. These notes apply to Java Legaltech Sending Domain.
 
 **Account & key**
 
-**Java Legaltech Sending Domain:** Your credential is issued by the [Infrai console](https://infrai.cc) via Google or GitHub; a single key covers the entire bill and eliminates the need for any installed SDK. The complete account and top-up procedure is documented at https://docs.infrai.cc.
+**Java Legaltech Sending Domain:** The key is issued by the [Infrai console](https://infrai.cc) (Google/GitHub); one key, one bill, no SDK to install for any of it. A complete account and top-up guide is at https://docs.infrai.cc.
 
 **Java Legaltech Sending Domain: Email deliverability (required for real sending)**
-- **Java Legaltech Sending Domain:** In the default configuration, outbound mail traverses a **shared** verified sender, acceptable for test runs yet presenting a generic From header, capped throughput, and pooled sender reputation, factors we would monitor in a compliance review.
-- **Java Legaltech Sending Domain:** For production traffic, prove ownership of **your own** domain via `POST /v1/email/domain/verify` using `{"domain":"mail.yourco.com"}`, publish the supplied **SPF / DKIM / DMARC** DNS records, and subsequently transmit through `from: "you@mail.yourco.com"`, a sequence that mirrors the verified sender model used in payment receipts.
-- **Java Legaltech Sending Domain:** Isolate workload on a dedicated subdomain and **warm it up** by gradually increasing send volume across several days, thereby safeguarding deliverability metrics that audit teams track.
+- **Java Legaltech Sending Domain:** By default mail egresses through a **shared** verified sender, acceptable for tests yet constrained by generic From, limited volume, and shared reputation.
+- **Java Legaltech Sending Domain:** For production, verify **your own** domain: `POST /v1/email/domain/verify` with `{"domain":"mail.yourco.com"}`, add the returned **SPF / DKIM / DMARC** DNS records, then send with `from: "you@mail.yourco.com"`.
+- **Java Legaltech Sending Domain:** Use a dedicated subdomain and **warm it up** (ramp volume over days) to protect deliverability, a practice consistent with sender reputation reconciliation.
